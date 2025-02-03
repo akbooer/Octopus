@@ -2,7 +2,7 @@ module(..., package.seeall)
 
 _G.ABOUT = {
   NAME          = "L_OctopusEnergy",
-  VERSION       = "2025.02.02",
+  VERSION       = "2025.02.03",
   DESCRIPTION   = "OctopusEnergy meter reader",
   AUTHOR        = "@akbooer",
   COPYRIGHT     = "(c) 2025-present AKBooer",
@@ -33,17 +33,11 @@ _G.ABOUT = {
 see:
   https://developer.octopus.energy/rest/guides/api-basics#api-basics
   https://www.guylipman.com/octopus/api_guide.html
-  
-  The Octopus API returns data in half-hour intervals, 
-  so these are aggregated in pairs to hourly totals, then daily, etc...
-  
+    
   Note that the multiple variables are used, as defined in the EnergyMetering1 service
-  to allow for (very) different archiving rules:
   
-    HourKWH   30m:1h,1h:90d
-    DayKWH    30m:1h,1h:1d,1d:10y
-    WeekKWH   30m:1h,1h:7d,7d:21y
-    MonthKWH  30m:1h,1h:28d,28d:28y
+    HourKWH   1h:90d
+    DayKWH    1h:7d,1d:10y  with sum aggregation
    
 --]]
 
@@ -78,7 +72,7 @@ local base = "https://api.octopus.energy/v1/"
 
 -- MPAN, Serial No., page_size, from, to (2020-03-29T01:29Z), 
 local consumption = 
-    "electricity-meter-points/%s/meters/%s/consumption/?page_size=%d&period_from=%s&period_to=%s&order_by=period"
+    "electricity-meter-points/%s/meters/%s/consumption/?page_size=%d&period_from=%s&period_to=%s&order_by=period&group_by=hour"
 
 
 
@@ -136,15 +130,17 @@ local function update_history(info)
     latest = t[i]
   end
 
+  _log("number of hourly readings received: " .. #t)
+  
   if latest then
-    t[#t+1] = latest + 30 * 60              -- add half an hour
+    t[#t+1] = latest + 60 * 60              -- add an hour
     v[#v+1] = 0 
     
     -- different files have different aggregations
     whisper.update_many (fullpath: format "Hour",  v, t)
     whisper.update_many (fullpath: format "Day",   v, t)
-    whisper.update_many (fullpath: format "Week",  v, t)
-    whisper.update_many (fullpath: format "Month", v, t)
+--    whisper.update_many (fullpath: format "Week",  v, t)
+--    whisper.update_many (fullpath: format "Month", v, t)
     
     D.hadevice.LastUpdate = os.time()
   _log ("OctopusEnergy updated")
@@ -187,11 +183,11 @@ local function request_readings (p)
   local A = D.attr 
   
   local now = os.time()
-  local ago = now - 60 * 60 * 24 * 2
+  local ago = now - 60 * 60 * 24 * 7    -- 7 days
 --  _log "async poll of meter"
   _log "poll of meter"
   
-  local request = consumption: format(A.mpan, A.meter, 100, ISOdateTime(ago), ISOdateTime(now))
+  local request = consumption: format(A.mpan, A.meter, 200, ISOdateTime(ago), ISOdateTime(now))
 
   if async then
     https_request (base .. request, nil, A.key)  -- history will be updated in request_callback()
@@ -239,8 +235,8 @@ function init (lul_device)
   do -- ensure that the key variables exist
     D.energy.HourKWH  = 0
     D.energy.DayKWH   = 0
-    D.energy.WeekKWH  = 0
-    D.energy.MonthKWH = 0
+--    D.energy.WeekKWH  = 0
+--    D.energy.MonthKWH = 0
   end
   
   do -- delay polling startup
