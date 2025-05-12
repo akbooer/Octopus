@@ -2,7 +2,7 @@ module(..., package.seeall)
 
 _G.ABOUT = {
   NAME          = "L_OctopusEnergy",
-  VERSION       = "2025.02.03",
+  VERSION       = "2025.05.12",
   DESCRIPTION   = "OctopusEnergy meter reader",
   AUTHOR        = "@akbooer",
   COPYRIGHT     = "(c) 2025-present AKBooer",
@@ -27,6 +27,7 @@ _G.ABOUT = {
 
 -- 2025.02.01  original version
 -- 2025.01.02  add asynchronous HTTPS request
+-- 2025.05.12  add pcall() to poll()... seems to fail sometimes
 
 
 --[[
@@ -139,8 +140,6 @@ local function update_history(info)
     -- different files have different aggregations
     whisper.update_many (fullpath: format "Hour",  v, t)
     whisper.update_many (fullpath: format "Day",   v, t)
---    whisper.update_many (fullpath: format "Week",  v, t)
---    whisper.update_many (fullpath: format "Month", v, t)
     
     D.hadevice.LastUpdate = os.time()
   _log ("OctopusEnergy updated")
@@ -177,17 +176,22 @@ end
 --  REQUEST INFO FROM SERVER
 --
 
+local min, max = math.min, math.max
+
 local function request_readings (p)
 
   local D = API[p.D]      -- this device
   local A = D.attr 
   
+  local days = max(1, min(30, tonumber(A.recall_days) or 7))
+  A.recall_days = days
+  
   local now = os.time()
-  local ago = now - 60 * 60 * 24 * 7    -- 7 days
+  local ago = now - 60 * 60 * 24 * days
 --  _log "async poll of meter"
   _log "poll of meter"
   
-  local request = consumption: format(A.mpan, A.meter, 200, ISOdateTime(ago), ISOdateTime(now))
+  local request = consumption: format(A.mpan, A.meter, days * 25, ISOdateTime(ago), ISOdateTime(now))
 
   if async then
     https_request (base .. request, nil, A.key)  -- history will be updated in request_callback()
@@ -200,8 +204,9 @@ end
 
 
 local function poll (p)
-  request_readings (p)
-
+  local ok, err = pcall(request_readings, p)
+  if not ok then _log(err) end
+  
   -- rechedule 
   API.timers "delay" {
     callback = poll, 
@@ -235,8 +240,6 @@ function init (lul_device)
   do -- ensure that the key variables exist
     D.energy.HourKWH  = 0
     D.energy.DayKWH   = 0
---    D.energy.WeekKWH  = 0
---    D.energy.MonthKWH = 0
   end
   
   do -- delay polling startup
